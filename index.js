@@ -1,5 +1,12 @@
 const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
+const multer = require('multer');
+const { uploadToCDN } = require('./cdnUploader');
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 4.5 * 1024 * 1024 }
+});
 
 const app = express();
 
@@ -17,6 +24,33 @@ const proxy = createProxyMiddleware({
       req.headers['Via'] = '';
     }
     return nggUrl;
+  }
+});
+
+app.use(async (req, res, next) => {
+  if (req.method === 'POST' || req.method === 'PUT') {
+    const contentlength = req.headers['content-length'] || 0;
+
+    if (contentlength > 4.5 * 1024 * 1024) {
+      upload.single('file')(req, res, async (err) => {
+        if (err) {
+          return res.status(413).send('Data too large');
+        }
+
+        try {
+          const cdnres = await uploadToCDN(req.file);
+          const tempurl = cdnres.url;
+
+          return res.json({ tempurl });
+        } catch (uploadError) {
+          return res.status(500).send('Err');
+        }
+      });
+    } else {
+      next();
+    }
+  } else {
+    next();
   }
 });
 
